@@ -183,6 +183,37 @@ export function getTimezoneOffsetSeconds(
     // Fall back to browser local timezone
     return -(new Date(epochMs).getTimezoneOffset() * 60);
   }
+  // Called per point and per axis label, so cache: an offset only changes at a zone transition, and
+  // transitions fall on 15-minute UTC boundaries, so every instant in a 15-minute bucket shares one.
+  let byBucket = offsetCache.get(timeZone);
+  if (byBucket == null) {
+    byBucket = new Map();
+    offsetCache.set(timeZone, byBucket);
+  }
+  const bucket = Math.floor(epochMs / OFFSET_BUCKET_MS);
+  let offset = byBucket.get(bucket);
+  if (offset === undefined) {
+    offset = computeTimezoneOffsetSeconds(epochMs, timeZone);
+    if (byBucket.size >= OFFSET_CACHE_MAX) byBucket.clear();
+    byBucket.set(bucket, offset);
+  }
+  return offset;
+}
+
+/** Offset cache: timeZone -> 15-minute UTC bucket -> offset in seconds. */
+const offsetCache = new Map<string, Map<number, number>>();
+const OFFSET_BUCKET_MS = 15 * 60 * 1000;
+/** Bound per zone (about 200 days of buckets); a full cache is simply cleared. */
+const OFFSET_CACHE_MAX = 20_000;
+
+/**
+ * The timezone offset in seconds for an instant, computed with Intl (uncached).
+ * getTimezoneOffsetSeconds caches this; exported for tests.
+ */
+export function computeTimezoneOffsetSeconds(
+  epochMs: number,
+  timeZone: string
+): number {
   // Use Intl.DateTimeFormat to compute the offset for the given timezone.
   // The formatter is cached per timezone — only formatToParts varies per instant.
   const utcDate = new Date(epochMs);
