@@ -4,6 +4,12 @@ export { default as TradingViewPlugin } from './TradingViewPlugin';
 export { default as TradingViewChart } from './TradingViewChart';
 export { default as TradingViewChartModel } from './TradingViewChartModel';
 export { default as TradingViewChartRenderer } from './TradingViewChartRenderer';
+export {
+  TVL_CHART_EVENT,
+  TVL_RENDERER_KEY,
+  type TvlChartEventDetail,
+  type TvlChartEventKind,
+} from './TradingViewChartRenderer';
 
 // Default export is the plugin
 export default TradingViewPlugin;

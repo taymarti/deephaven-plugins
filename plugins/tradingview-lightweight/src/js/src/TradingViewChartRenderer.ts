@@ -339,6 +339,34 @@ function hexToRgba(color: string, alpha: number): string {
 }
 
 /**
+ * Name of the DOM event a renderer dispatches on its container (bubbling) when its chart's lifecycle
+ * changes, so code outside the plugin can extend the chart, e.g. attach lightweight-charts plugins
+ * (series/pane primitives) to its series:
+ *
+ *   el.addEventListener(TVL_CHART_EVENT, e => {
+ *     const { kind, chart, renderer } = (e as CustomEvent<TvlChartEventDetail>).detail;
+ *     if (kind === 'series') renderer.getDataSeriesList()[0].attachPrimitive(myPrimitive);
+ *   });
+ *
+ * - 'ready': a chart was created (also after setChartType rebuilds it); series follow
+ * - 'series': the series were (re)configured; getDataSeriesList() is current, and anything attached
+ *   to the previous series is gone with them
+ * - 'destroy': the chart is about to be removed
+ *
+ * The container also exposes the live renderer as `container[TVL_RENDERER_KEY]`, for listeners
+ * attached after 'ready'.
+ */
+export const TVL_CHART_EVENT = 'tvl-chart';
+export const TVL_RENDERER_KEY = '__tvlRenderer';
+export type TvlChartEventKind = 'ready' | 'series' | 'destroy';
+export interface TvlChartEventDetail {
+  kind: TvlChartEventKind;
+  // eslint-disable-next-line no-use-before-define
+  renderer: TradingViewChartRenderer;
+  chart: IChartApi;
+}
+
+/**
  * Imperative wrapper around TradingView Lightweight Charts.
  * Manages chart and series lifecycle, data updates, and theming.
  */
@@ -488,6 +516,23 @@ class TradingViewChartRenderer {
     if (wmRaw != null) {
       this.applyWatermark(wmRaw as LegacyWatermarkOptions);
     }
+    // synchronous, so 'ready' always precedes the first 'series' (listeners get the renderer in the detail)
+    this.notifyChartEvent('ready');
+  }
+
+  /** Announce a chart lifecycle change; see TVL_CHART_EVENT. */
+  private notifyChartEvent(kind: TvlChartEventKind): void {
+    const host = this.container as HTMLElement & {
+      [TVL_RENDERER_KEY]?: TradingViewChartRenderer;
+    };
+    host[TVL_RENDERER_KEY] = kind === 'destroy' ? undefined : this;
+    const detail: TvlChartEventDetail = { kind, renderer: this, chart: this.chart };
+    host.dispatchEvent(
+      new CustomEvent<TvlChartEventDetail>(TVL_CHART_EVENT, {
+        bubbles: true,
+        detail,
+      })
+    );
   }
 
   /**
@@ -633,6 +678,7 @@ class TradingViewChartRenderer {
     if (this.constructorWatermark != null) {
       this.applyWatermark(this.constructorWatermark);
     }
+    this.notifyChartEvent('ready');
   }
 
   /**
@@ -704,6 +750,21 @@ class TradingViewChartRenderer {
     colorwayInput: string[] = [],
     ohlcColorsInput?: { upColor: string; downColor: string },
     enableScaffold = false
+  ): void {
+    this.applySeriesConfigs(
+      seriesConfigs,
+      colorwayInput,
+      ohlcColorsInput,
+      enableScaffold
+    );
+    this.notifyChartEvent('series');
+  }
+
+  private applySeriesConfigs(
+    seriesConfigs: TvlSeriesConfig[],
+    colorwayInput: string[],
+    ohlcColorsInput: { upColor: string; downColor: string } | undefined,
+    enableScaffold: boolean
   ): void {
     // Resolve any DH theme color names in user-supplied options up front so
     // canvas drawing calls receive concrete CSS color strings (hex/rgba).
@@ -1786,6 +1847,7 @@ class TradingViewChartRenderer {
    * Dispose of the chart and clean up resources.
    */
   dispose(): void {
+    this.notifyChartEvent('destroy');
     this.seriesMap.clear();
     this.markersMap.clear();
     this.dynamicPriceLines.clear();
